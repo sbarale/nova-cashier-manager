@@ -2,6 +2,7 @@
 
 namespace Themsaid\CashierTool;
 
+use App\Spark;
 use Stripe\Plan;
 use Stripe\Refund;
 use Stripe\Stripe;
@@ -11,6 +12,8 @@ use Illuminate\Support\Carbon;
 use Illuminate\Config\Repository;
 use Illuminate\Routing\Controller;
 use Stripe\Subscription as StripeSubscription;
+use Benmag\SparkAddons\Contracts\Interactions\CancelTeamAddonSubscription;
+use Benmag\SparkAddons\Contracts\Interactions\ResumeTeamAddonSubscription;
 
 class CashierToolController extends Controller
 {
@@ -66,16 +69,24 @@ class CashierToolController extends Controller
         }
 
         $stripeSubscription = StripeSubscription::retrieve($subscription->stripe_id);
-
         return [
             'user' => $billable->toArray(),
             'cards' => request('brief') ? [] : $this->formatCards($billable->cards(), $billable->defaultCard()->id),
             'invoices' => request('brief') ? [] : $this->formatInvoices($billable->invoicesIncludingPending()),
             'charges' => request('brief') ? [] : $this->formatCharges($billable->asStripeCustomer()->charges()),
             'subscription' => $this->formatSubscription($subscription, $stripeSubscription),
+            'addon_subscriptions' => collect(\Spark::addonSubscriptionsToBeSettled($billable))->map(function($addon) {
+                $addon->ended = $addon->ended();
+                $addon->cancelled = $addon->cancelled();
+                $addon->active = $addon->active();
+                $addon->on_trial = $addon->onTrial();
+                $addon->on_grace_period = $addon->onGracePeriod();
+                return $addon;
+            }),
             'plans' => request('brief') ? [] : $this->formatPlans(Plan::all(['limit' => 100])),
         ];
     }
+
 
     /**
      * Cancel the given subscription.
@@ -93,8 +104,14 @@ class CashierToolController extends Controller
         } else {
             $billable->subscription($this->subscriptionName)->cancel();
         }
-    }
 
+
+        if(Spark::usesTeams()) {
+            event(new \Laravel\Spark\Events\Teams\Subscription\SubscriptionCancelled($billable->fresh()));
+        } else {
+            event(new \Laravel\Spark\Events\Subscription\SubscriptionCancelled($billable->fresh()));
+        }
+    }
     /**
      * Update the given subscription.
      *
@@ -107,8 +124,13 @@ class CashierToolController extends Controller
         $billable = (new $this->stripeModel)->find($billableId);
 
         $billable->subscription($this->subscriptionName)->swap($request->input('plan'));
-    }
 
+        if(Spark::usesTeams()) {
+            event(new \Laravel\Spark\Events\Teams\Subscription\SubscriptionUpdated($billable->fresh()));
+        } else {
+            event(new \Laravel\Spark\Events\Subscription\SubscriptionUpdated($billable->fresh()));
+        }
+    }
     /**
      * Resume the given subscription.
      *
@@ -121,7 +143,63 @@ class CashierToolController extends Controller
     {
         $billable = (new $this->stripeModel)->find($billableId);
 
-        $billable->subscription($this->subscriptionName)->resume();
+        $subscription = $billable->subscription($this->subscriptionName);
+
+        $subscription->swap($subscription->stripe_plan);
+
+        if(Spark::usesTeams()) {
+            event(new \Laravel\Spark\Events\Teams\Subscription\SubscriptionUpdated($billable->fresh()));
+        } else {
+            event(new \Laravel\Spark\Events\Subscription\SubscriptionUpdated($billable->fresh()));
+        }
+    }
+
+    /**
+     * Cancel the given add-on subscription.
+     *
+     * @param Request $request
+     * @param $billableId
+     * @param $addonId
+     */
+    public function cancelAddonSubscription(Request $request, $billableId, $addonId)
+    {
+
+        $billable = (new $this->stripeModel)->find($billableId);
+
+        // Get the add-on subscription
+        $addonSubscription = $billable->addonSubscriptions()->findOrFail($addonId);
+
+        // Find the add-on plan
+        $addonPlan = Spark::findAddonPlanById($addonSubscription->subscription->provider_plan);
+
+        // Cancel addon subscription
+        Spark::call(CancelTeamAddonSubscription::class, [$addonSubscription, $addonPlan]);
+
+        // Cancel the add-on
+        if(!empty($addonPlan->onCancel)) {
+            dispatch(new $addonPlan->onCancel($billable, $addonSubscription));
+        }
+
+    }
+
+    public function resumeAddonSubscription(Request $request, $billableId, $addonId)
+    {
+
+        $billable = (new $this->stripeModel)->find($billableId);
+
+        // Get the add-on subscription
+        $addonSubscription = $billable->addonSubscriptions()->findOrFail($addonId);
+
+        // Find the add-on plan
+        $addonPlan = Spark::findAddonPlanById($addonSubscription->subscription->provider_plan);
+
+        // Resume
+        Spark::call(ResumeTeamAddonSubscription::class, [$addonSubscription, $addonPlan]);
+
+        // Resume the add-on
+        if(!empty($addonPlan->onResume)) {
+            dispatch(new $addonPlan->onResume($billable, $addonSubscription));
+        }
     }
 
     /**
@@ -156,6 +234,7 @@ class CashierToolController extends Controller
      */
     public function formatSubscription($subscription, $stripeSubscription)
     {
+        $stripeSubscription->plan = collect($stripeSubscription->items->data)->firstWhere('id', $subscription->stripe_item_id)->plan;
         return array_merge($subscription->toArray(), [
             'plan_amount' => $stripeSubscription->plan->amount,
             'plan_interval' => $stripeSubscription->plan->interval,

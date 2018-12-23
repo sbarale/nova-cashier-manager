@@ -8,6 +8,7 @@
                 loading: true,
                 user: null,
                 subscription: null,
+                addon_subscriptions: null,
                 cards: [],
                 invoices: [],
                 charges: [],
@@ -31,6 +32,7 @@
                         .then(response => {
                             this.user = response.data.user;
                             this.subscription = response.data.subscription;
+                            this.addon_subscriptions = response.data.addon_subscriptions;
                             this.cards = response.data.cards;
                             this.invoices = response.data.invoices;
                             this.charges = response.data.charges;
@@ -112,7 +114,42 @@
                         .catch(errors => {
                             this.$toasted.show(errors.response.data.message, {type: "error"});
                         })
-            }
+            },
+
+            /**
+             * Cancel add-on subscription.
+             */
+            cancelAddonSubscription(id){
+                this.loading = true;
+
+                axios.post(`/nova-cashier-tool-api/user/${this.userId}/cancel-addon/${id}`)
+                        .then(response => {
+                            this.$toasted.show("Cancelled add-on successfully!", {type: "success"});
+
+                            this.loadUserData();
+                        })
+                        .catch(errors => {
+                            this.$toasted.show(errors.response.data.message, {type: "error"});
+                        })
+            },
+
+
+            /**
+             * Resume subscription.
+             */
+            resumeAddonSubscription(id){
+                this.loading = true;
+
+                axios.post(`/nova-cashier-tool-api/user/${this.userId}/resume-addon/${id}`)
+                        .then(response => {
+                            this.$toasted.show("Resumed add-on successfully!", {type: "success"});
+
+                            this.loadUserData();
+                        })
+                        .catch(errors => {
+                            this.$toasted.show(errors.response.data.message, {type: "error"});
+                        })
+            },
         }
     }
 </script>
@@ -193,6 +230,48 @@
                     </p>
                 </div>
             </div>
+
+
+            <div v-if="addon_subscriptions && subscription.active && !subscription.cancelled && !subscription.cancel_at_period_end" class="overflow-hidden overflow-x-auto relative">
+                <table cellpadding="0" cellspacing="0" data-testid="resource-table" class="table w-full">
+                    <thead>
+                    <tr>
+                        <th class="text-left"><span class="cursor-pointer inline-flex items-center">Pricing Plan</span></th>
+                        <th class="text-left"><span class="cursor-pointer inline-flex items-center">Price</span></th>
+                        <th class="text-left"><span class="cursor-pointer inline-flex items-center">Quantity</span></th>
+                        <th class="text-left"><span class="cursor-pointer inline-flex items-center">Status</span></th>
+                    </tr>
+                    </thead>
+                    <tbody>
+                    <tr v-for="addon in addon_subscriptions">
+                        <td><strong>{{ addon.addon.name }} {{ addon.addonPlan.name }}</strong> &#8212; #{{ addon.id }}</td>
+                        <td>{{addon.addonPlan.price}} / {{ addon.addonPlan.usageType == "licensed" ? addon.addonPlan.interval : addon.addonPlan.unit }}</td>
+                        <td>
+                            <span v-if="addon.addonPlan.usageType == 'metered'">
+                                {{ addon.current_usage }} {{ addon.addonPlan.unit }}
+                            </span>
+                            <span v-else>{{ addon.subscription.quantity }}</span>
+                        </td>
+                        <td>
+                            <span v-if="addon.on_grace_period">On Grace Period</span>
+                            <span v-if="addon.cancelled || addon.cancel_at_period_end" class="text-danger">Cancelled</span>
+                            <span v-if="addon.active && !addon.cancelled && !addon.cancel_at_period_end">Active</span>
+
+                            <button class="btn btn-sm btn-outline" v-if="addon.active && !addon.cancelled && !addon.ends_at"
+                                    v-on:click="cancelAddonSubscription(addon.id)">
+                                Cancel
+                            </button>
+
+                            <button class="btn btn-sm btn-outline" v-if="addon.active && addon.ends_at && addon.on_grace_period"
+                                    v-on:click="resumeAddonSubscription(addon.id)">
+                                Resume
+                            </button>
+                        </td>
+                    </tr>
+                    </tbody>
+                </table>
+            </div>
+
         </div>
 
         <div class="card mb-6 relative" v-if="!loading && invoices && invoices.length">
