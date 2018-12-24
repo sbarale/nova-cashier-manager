@@ -50,6 +50,8 @@
                 <div class="w-1/4 py-4"><h4 class="font-normal text-80">ID</h4></div>
                 <div class="w-3/4 py-4"><p class="text-90">
                     {{subscription.stripe_id}}
+                    ·
+                    <a class="text-primary no-underline" :href="'https://dashboard.stripe.com/subscriptions/' + subscription.stripe_id" target="_blank">View on Stripe</a>
                 </p></div>
             </div>
 

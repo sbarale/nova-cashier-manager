@@ -175,7 +175,11 @@
         <div class="card mb-6 py-3 px-6" v-if="!loading && subscription">
             <div class="flex border-b border-40">
                 <div class="w-1/4 py-4"><h4 class="font-normal text-80">Customer</h4></div>
-                <div class="w-3/4 py-4"><p class="text-90">{{user.name}} ({{user.email}})</p></div>
+                <div class="w-3/4 py-4"><p class="text-90">
+                    {{user.name}} ({{user.email}})
+                    ·
+                    <a class="text-primary no-underline" :href="'https://dashboard.stripe.com/customers/' + user.stripe_id" target="_blank">View on Stripe</a>
+                </p></div>
             </div>
 
             <div class="flex border-b border-40" v-if="subscription">
